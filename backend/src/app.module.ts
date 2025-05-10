@@ -1,16 +1,12 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
-import { ConfigModule, ConfigService } from '@nestjs/config';
 import { LoggerModule } from 'nestjs-pino';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
-import { MongoDBService } from './database/mongodb.service';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-    }),
+    ConfigModule.forRoot(),
     LoggerModule.forRoot({
       pinoHttp: {
         transport: {
@@ -21,34 +17,8 @@ import { MongoDBService } from './database/mongodb.service';
         },
       },
     }),
-    MongooseModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => {
-        const uri = configService.get<string>('MONGODB_URI');
-        return {
-          uri,
-          autoIndex: true,
-          autoCreate: true,
-          serverSelectionTimeoutMS: 5000,
-          socketTimeoutMS: 45000,
-          connectTimeoutMS: 10000,
-          retryWrites: true,
-          retryReads: true,
-          maxPoolSize: 10,
-          minPoolSize: 5,
-          maxIdleTimeMS: 60000,
-          heartbeatFrequencyMS: 10000,
-          autoReconnect: true,
-          reconnectTries: Number.MAX_VALUE,
-          reconnectInterval: 1000,
-          family: 4,
-          loggerLevel: 'info',
-        };
-      },
-      inject: [ConfigService],
-    }),
+    MongooseModule.forRoot(process.env.MONGODB_URI || 'mongodb://localhost:27017/calendly-tool'),
+    AuthModule,
   ],
-  controllers: [AppController],
-  providers: [AppService, MongoDBService],
 })
 export class AppModule {}
