@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [ develop ]
+  pull_request:
+    branches: [ develop ]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - name: Install MongoDB
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mongodb
+          sudo service mongodb start
+      - name: Install dependencies
+        run: |
+          cd backend
+          npm install
+      - name: Run ESLint
+        run: |
+          cd backend
+          npm run lint
+      - name: Run tests
+        run: |
+          cd backend
+          npm run test
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm install
+      - name: Run ESLint
+        run: |
+          cd frontend
+          npm run lint
+      - name: Run tests
+        run: |
+          cd frontend
+          npm run test 
