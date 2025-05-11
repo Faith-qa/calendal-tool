@@ -15,8 +15,27 @@ This project consists of a NestJS backend and React frontend, both written in Ty
 
 ### Backend (NestJS)
 
+1. Copy the environment variables template:
 ```bash
 cd backend
+cp .env.example .env
+```
+
+2. Update the `.env` file with your configuration:
+   - `MONGODB_URI`: Your MongoDB connection string
+   - `JWT_SECRET`: Generate a secure random string using:
+     ```bash
+     node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+     ```
+   - `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`: Get these from [Google Cloud Console](https://console.cloud.google.com)
+     - Create a new project or select an existing one
+     - Enable the Google+ API
+     - Go to Credentials
+     - Create OAuth 2.0 Client ID
+     - Add authorized redirect URI: `http://localhost:3000/auth/google/callback`
+
+3. Install dependencies and start the server:
+```bash
 npm install
 npm run start:dev
 ```
@@ -28,6 +47,14 @@ cd frontend
 npm install
 npm run dev
 ```
+
+## Security Considerations
+
+- Never commit the `.env` file to version control
+- Keep your JWT secret secure and unique for each environment
+- Rotate secrets and credentials regularly
+- Use environment-specific configuration for production
+- Consider using a secrets management service in production
 
 ## Testing
 
