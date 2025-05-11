@@ -9,11 +9,14 @@ import {
 } from '@nestjs/common';
 import { CalendarService } from './calendar.service';
 import { Request } from 'express';
-import { IsISO8601 } from 'class-validator';
+import { IsString, Matches } from 'class-validator';
 import { ValidationPipe } from '@nestjs/common';
 
 class DateQueryDto {
-  @IsISO8601()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'Date must be in YYYY-MM-DD format',
+  })
   date: string;
 }
 
@@ -21,41 +24,51 @@ class DateQueryDto {
 export class CalendarController {
   constructor(private readonly calendarService: CalendarService) {}
 
-  @Get('slots')
+  @Get('available-slots')
   async getAvailableSlots(
     @Req() req: Request,
-    @Query(ValidationPipe) dateQuery: DateQueryDto,
+    @Query() query: DateQueryDto,
     @Query('startHour', ParseIntPipe) startHour: number,
     @Query('endHour', ParseIntPipe) endHour: number,
     @Query('slotDuration', ParseIntPipe) slotDuration: number,
-    @Query('timeZone') timeZone?: string,
   ) {
-    // Extract access token from the OAuth flow result
-    const accessToken = req.user?.['token']?.access_token;
-    if (!accessToken) {
-      throw new UnauthorizedException('Access token not found');
+    if (!req.user?.token?.access_token) {
+      throw new UnauthorizedException('Access token is required');
+    }
+
+    // Validate time range
+    if (startHour < 0 || startHour > 23 || endHour < 0 || endHour > 24 || endHour <= startHour) {
+      throw new BadRequestException('Invalid time range');
+    }
+    // Validate slot duration
+    if (slotDuration <= 0 || slotDuration > 120 || slotDuration % 5 !== 0) {
+      throw new BadRequestException('Invalid slot duration');
     }
 
     try {
-      // Validate date format
-      const date = new Date(dateQuery.date);
-      if (isNaN(date.getTime()) || !/^\d{4}-\d{2}-\d{2}$/.test(dateQuery.date)) {
-        throw new BadRequestException('Invalid date format. Please use ISO 8601 format (YYYY-MM-DD)');
+      const date = new Date(query.date);
+      if (isNaN(date.getTime())) {
+        throw new BadRequestException('Invalid date format');
+      }
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      if (date < today) {
+        throw new BadRequestException('Cannot book slots in the past');
       }
 
       return await this.calendarService.getAvailableSlots(
-        accessToken,
-        dateQuery.date,
+        req.user.token.access_token,
+        query.date,
         startHour,
         endHour,
         slotDuration,
-        timeZone,
       );
     } catch (error) {
-      if (error instanceof BadRequestException || error instanceof UnauthorizedException) {
+      if (error instanceof BadRequestException) {
         throw error;
       }
-      throw new BadRequestException(`Failed to get available slots: ${error.message}`);
+      throw new BadRequestException(error.message);
     }
   }
 } 

@@ -11,10 +11,16 @@ export class AuthService {
     private jwtService: JwtService,
   ) {}
 
-  async validateOAuthLogin(email: string, name: string): Promise<{ user: User; token: string }> {
+  async validateOAuthLogin(email: string, name: string, accessToken: string): Promise<{ user: User; token: string }> {
     let user = await this.userModel.findOne({ email });
     if (!user) {
-      user = await this.userModel.create({ email, name });
+      user = await this.userModel.create({ email, name, accessToken });
+    } else {
+      const updatedUser = await this.userModel.findByIdAndUpdate(user._id, { accessToken }, { new: true });
+      if (!updatedUser) {
+        throw new Error('Failed to update user');
+      }
+      user = updatedUser;
     }
     const token = this.jwtService.sign({ sub: user._id, email: user.email, name: user.name });
     return { user, token };
