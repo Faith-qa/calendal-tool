@@ -1,14 +1,14 @@
+import React from 'react';
 import { useForm } from 'react-hook-form';
 import api from '../../services/api';
 
 interface WindowFormData {
-  startHour: number;
-  endHour: number;
-  weekday: string;
+  startTime: string;
+  endTime: string;
 }
 
 const SchedulingWindowForm: React.FC = () => {
-  const { register, handleSubmit } = useForm<WindowFormData>();
+  const { register, handleSubmit, formState: { errors } } = useForm<WindowFormData>();
 
   const onSubmit = async (data: WindowFormData) => {
     try {
@@ -20,27 +20,55 @@ const SchedulingWindowForm: React.FC = () => {
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="mb-4 p-4 border rounded">
-      <h2 className="text-xl mb-2">Create Scheduling Window</h2>
-      <input
-        type="number"
-        {...register('startHour', { required: true, min: 0, max: 23 })}
-        placeholder="Start Hour"
-        className="border p-2 mr-2"
-      />
-      <input
-        type="number"
-        {...register('endHour', { required: true, min: 0, max: 24 })}
-        placeholder="End Hour"
-        className="border p-2 mr-2"
-      />
-      <select {...register('weekday', { required: true })} className="border p-2 mr-2">
-        {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map(day => (
-          <option key={day} value={day}>{day}</option>
-        ))}
-      </select>
-      <button type="submit" className="bg-blue-500 text-white px-4 py-2 rounded">Create Window</button>
-    </form>
+    <div className="bg-white p-6 rounded-lg shadow mb-8">
+      <h2 className="text-xl font-semibold mb-4">Create Scheduling Window</h2>
+      <form onSubmit={handleSubmit(onSubmit)}>
+        <div className="space-y-4">
+          <div>
+            <label htmlFor="startTime" className="block text-sm font-medium text-gray-700">
+              Start Time
+            </label>
+            <input
+              type="time"
+              id="startTime"
+              {...register('startTime', { required: 'Start time is required' })}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            />
+            {errors.startTime && (
+              <p className="mt-1 text-sm text-red-600">{errors.startTime.message}</p>
+            )}
+          </div>
+          <div>
+            <label htmlFor="endTime" className="block text-sm font-medium text-gray-700">
+              End Time
+            </label>
+            <input
+              type="time"
+              id="endTime"
+              {...register('endTime', { 
+                required: 'End time is required',
+                validate: (value, formValues) => {
+                  if (value <= formValues.startTime) {
+                    return 'End time must be after start time';
+                  }
+                  return true;
+                }
+              })}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+            />
+            {errors.endTime && (
+              <p className="mt-1 text-sm text-red-600">{errors.endTime.message}</p>
+            )}
+          </div>
+          <button
+            type="submit"
+            className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            Create Window
+          </button>
+        </div>
+      </form>
+    </div>
   );
 };
 

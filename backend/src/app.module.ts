@@ -8,16 +8,7 @@ import { CalendarModule } from './calendar/calendar.module';
 @Module({
   imports: [
     ConfigModule.forRoot(),
-    LoggerModule.forRoot({
-      pinoHttp: {
-        transport: {
-          target: 'pino-pretty',
-          options: {
-            singleLine: true,
-          },
-        },
-      },
-    }),
+    LoggerModule.forRoot(),
     MongooseModule.forRoot(process.env.MONGODB_URI || 'mongodb://localhost:27017/calendly-tool'),
     AuthModule,
     CalendarModule,

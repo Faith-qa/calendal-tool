@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import SchedulingWindowForm from '../components/Scheduling/SchedulingWindowForm';
@@ -5,13 +6,16 @@ import SchedulingLinkForm from '../components/Scheduling/SchedulingLinkForm';
 import MeetingList from '../components/Dashboard/MeetingList';
 
 const AdvisorDashboard: React.FC = () => {
-  const navigate = useNavigate();
   const { googleToken } = useAuth();
+  const navigate = useNavigate();
 
-  if (!googleToken) {
-    navigate('/login');
-    return null;
-  }
+  useEffect(() => {
+    if (!googleToken) {
+      navigate('/login');
+    }
+  }, [googleToken, navigate]);
+
+  if (!googleToken) return <p className="text-lg text-gray-600">Please log in with Google to access the dashboard.</p>;
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
@@ -20,11 +24,11 @@ const AdvisorDashboard: React.FC = () => {
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           <div>
-            <SchedulingWindowForm />
-            <SchedulingLinkForm />
+            <SchedulingWindowForm data-testid="scheduling-window-form" />
+            <SchedulingLinkForm data-testid="scheduling-link-form" />
           </div>
           <div>
-            <MeetingList />
+            <MeetingList data-testid="meeting-list" />
           </div>
         </div>
       </div>
