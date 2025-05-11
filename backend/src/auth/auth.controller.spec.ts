@@ -6,6 +6,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { Strategy } from 'passport-google-oauth20';
 import { InternalServerErrorException, UnauthorizedException } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { RequestWithUser } from '../types/express';
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -20,6 +21,24 @@ describe('AuthController', () => {
     authenticate: jest.fn(),
   };
 
+  const mockConfigService = {
+    get: jest.fn((key: string) => {
+      const config = {
+        GOOGLE_CLIENT_ID: 'test-client-id',
+        GOOGLE_CLIENT_SECRET: 'test-client-secret',
+        GOOGLE_CALLBACK_URL: 'http://localhost:3000/auth/google/callback',
+      };
+      return config[key];
+    }),
+  };
+
+  const mockUser = {
+    id: '1',
+    email: 'test@example.com',
+    name: 'Test User',
+    accessToken: 'mock-access-token',
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
@@ -31,6 +50,10 @@ describe('AuthController', () => {
         {
           provide: 'GoogleStrategy',
           useValue: mockGoogleStrategy,
+        },
+        {
+          provide: ConfigService,
+          useValue: mockConfigService,
         },
       ],
     }).compile();
@@ -45,66 +68,74 @@ describe('AuthController', () => {
   });
 
   describe('googleAuth', () => {
-    it('should initiate Google OAuth flow', async () => {
-      const req = {} as Partial<Request>;
-      const res = {
+    it('should redirect to Google OAuth', async () => {
+      const mockReq = {} as Request;
+      const mockRes = {
         redirect: jest.fn(),
       } as unknown as Response;
 
-      await controller.googleAuth(req as Request, res);
+      await controller.googleAuth(mockReq, mockRes);
 
-      expect(res.redirect).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/auth');
+      expect(mockRes.redirect).toHaveBeenCalledWith('https://accounts.google.com/o/oauth2/auth');
     });
 
-    it('should handle Google OAuth flow errors', async () => {
-      const req = {} as Partial<Request>;
-      const res = {
-        redirect: jest.fn(() => { throw new Error('OAuth error'); }),
+    it('should throw InternalServerErrorException on OAuth error', async () => {
+      const mockReq = {} as Request;
+      const mockRes = {
+        redirect: jest.fn().mockImplementation(() => {
+          throw new Error('OAuth error');
+        }),
       } as unknown as Response;
 
-      await expect(controller.googleAuth(req as Request, res)).rejects.toThrow('OAuth error');
-      expect(res.redirect).toHaveBeenCalled();
+      await expect(controller.googleAuth(mockReq, mockRes)).rejects.toThrow(InternalServerErrorException);
+    });
+
+    it('should handle missing configuration', async () => {
+      mockConfigService.get.mockReturnValueOnce(undefined); // Simulate missing client ID
+
+      const req = {} as Partial<Request>;
+      const res = {
+        redirect: jest.fn().mockImplementation(() => {
+          throw new Error('OAuth error');
+        }),
+      } as unknown as Response;
+
+      await expect(controller.googleAuth(req as Request, res)).rejects.toThrow(InternalServerErrorException);
+      expect(res.redirect).not.toHaveBeenCalled();
     });
   });
 
-  describe('googleAuthRedirect', () => {
+  describe('googleAuthCallback', () => {
     it('should handle successful Google OAuth callback', async () => {
-      const req = {
-        user: {
-          user: { _id: '123', email: 'test@example.com', name: 'Test User' },
-          token: 'jwt-token',
-        },
-      } as Partial<Request>;
+      const mockUser = {
+        access_token: 'mock-access-token',
+      };
 
-      const result = await controller.googleAuthRedirect(req as Request);
+      const req = {
+        user: mockUser,
+      } as unknown as RequestWithUser;
+
+      const result = await controller.googleAuthCallback(req);
 
       expect(result).toEqual({
-        success: true,
-        data: {
-          user: { id: '123', email: 'test@example.com', name: 'Test User' },
-          token: 'jwt-token',
-        },
+        token: 'mock-access-token',
       });
     });
 
-    it('should throw UnauthorizedException when user is not authenticated', async () => {
-      const req = {} as Partial<Request>;
+    it('should throw UnauthorizedException when user is not found', async () => {
+      const req = {
+        user: null,
+      } as unknown as RequestWithUser;
 
-      await expect(controller.googleAuthRedirect(req as Request)).rejects.toThrow(UnauthorizedException);
+      await expect(controller.googleAuthCallback(req)).rejects.toThrow(UnauthorizedException);
     });
 
     it('should throw UnauthorizedException for invalid user data structure', async () => {
-      // Simulate an error by passing a request with user but missing token
       const req = {
-        user: {
-          user: { _id: '123', email: 'test@example.com', name: 'Test User' },
-          // token is missing
-        },
-      } as Partial<Request>;
+        user: {},
+      } as unknown as RequestWithUser;
 
-      await expect(controller.googleAuthRedirect(req as Request))
-        .rejects
-        .toThrow(UnauthorizedException);
+      await expect(controller.googleAuthCallback(req)).rejects.toThrow(UnauthorizedException);
     });
   });
 }); 

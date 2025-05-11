@@ -44,8 +44,8 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
         return;
       }
 
-      const { user, token } = await this.authService.validateOAuthLogin(email, name);
-      done(null, { user, token });
+      const { user, token } = await this.authService.validateOAuthLogin(email, name, accessToken);
+      done(null, { token: { access_token: token } });
     } catch (error) {
       if (error instanceof UnauthorizedException) {
         done(error, false);

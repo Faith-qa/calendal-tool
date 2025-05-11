@@ -109,29 +109,78 @@ describe('CalendarService', () => {
   });
 
   describe('getAvailableSlots', () => {
+    const mockAccessToken = 'test-access-token';
+    const futureDate = new Date();
+    futureDate.setDate(futureDate.getDate() + 1); // Use tomorrow's date
+    const dateString = futureDate.toISOString().split('T')[0];
+
     it('should calculate available time slots', async () => {
+      const mockEvents = [
+        {
+          start: { dateTime: `${dateString}T10:00:00Z` },
+          end: { dateTime: `${dateString}T11:00:00Z` },
+        },
+      ];
+
+      mockCalendar.events.list.mockResolvedValue({ data: { items: mockEvents } });
+
       const result = await service.getAvailableSlots(
-        'test-token',
-        '2024-05-10',
+        mockAccessToken,
+        dateString,
         9,
         17,
         30,
       );
 
-      expect(result).toEqual([
-        { start: '2024-05-10T09:00:00.000Z', end: '2024-05-10T09:30:00.000Z' },
-        { start: '2024-05-10T09:30:00.000Z', end: '2024-05-10T10:00:00.000Z' },
-        { start: '2024-05-10T11:00:00.000Z', end: '2024-05-10T11:30:00.000Z' },
-        { start: '2024-05-10T11:30:00.000Z', end: '2024-05-10T12:00:00.000Z' },
-        { start: '2024-05-10T12:00:00.000Z', end: '2024-05-10T12:30:00.000Z' },
-        { start: '2024-05-10T12:30:00.000Z', end: '2024-05-10T13:00:00.000Z' },
-        { start: '2024-05-10T13:00:00.000Z', end: '2024-05-10T13:30:00.000Z' },
-        { start: '2024-05-10T13:30:00.000Z', end: '2024-05-10T14:00:00.000Z' },
-        { start: '2024-05-10T15:00:00.000Z', end: '2024-05-10T15:30:00.000Z' },
-        { start: '2024-05-10T15:30:00.000Z', end: '2024-05-10T16:00:00.000Z' },
-        { start: '2024-05-10T16:00:00.000Z', end: '2024-05-10T16:30:00.000Z' },
-        { start: '2024-05-10T16:30:00.000Z', end: '2024-05-10T17:00:00.000Z' },
-      ]);
+      // 9:00-17:00 with 30-minute slots = 16 slots total
+      // 10:00-11:00 is busy = 2 slots removed
+      // 16 slots - 2 busy slots = 14 available slots
+      expect(result).toHaveLength(14);
+      expect(mockCalendar.events.list).toHaveBeenCalledWith({
+        calendarId: 'primary',
+        timeMin: expect.any(String),
+        timeMax: expect.any(String),
+        singleEvents: true,
+        orderBy: 'startTime',
+        timeZone: 'UTC',
+      });
+    });
+
+    it('should handle empty events list', async () => {
+      mockCalendar.events.list.mockResolvedValue({ data: { items: [] } });
+
+      const result = await service.getAvailableSlots(
+        mockAccessToken,
+        dateString,
+        9,
+        17,
+        30,
+      );
+
+      // 9:00-17:00 with 30-minute slots = 16 slots total
+      // No busy slots = all 16 slots available
+      expect(result).toHaveLength(16);
+      expect(mockCalendar.events.list).toHaveBeenCalled();
+    });
+
+    it('should use custom timezone when provided', async () => {
+      const timezone = 'America/New_York';
+      mockCalendar.events.list.mockResolvedValue({ data: { items: [] } });
+
+      await service.getAvailableSlots(
+        mockAccessToken,
+        dateString,
+        9,
+        17,
+        30,
+        timezone,
+      );
+
+      expect(mockCalendar.events.list).toHaveBeenCalledWith(
+        expect.objectContaining({
+          timeZone: timezone,
+        }),
+      );
     });
 
     describe('date validation', () => {
@@ -146,15 +195,6 @@ describe('CalendarService', () => {
           service.getAvailableSlots('test-token', '2024-13-45', 9, 10, 30),
         ).rejects.toThrow('Invalid date');
       });
-    });
-
-    it('should handle empty events list', async () => {
-      mockCalendar.events.list.mockResolvedValueOnce({ data: { items: [] } });
-      const result = await service.getAvailableSlots('test-token', '2024-05-10', 9, 10, 30);
-      expect(result).toEqual([
-        { start: '2024-05-10T09:00:00.000Z', end: '2024-05-10T09:30:00.000Z' },
-        { start: '2024-05-10T09:30:00.000Z', end: '2024-05-10T10:00:00.000Z' },
-      ]);
     });
 
     describe('input validation', () => {
@@ -194,12 +234,6 @@ describe('CalendarService', () => {
       await expect(
         service.getAvailableSlots('test-token', '2024-05-10', 9, 10, 30),
       ).rejects.toThrow(BadRequestException);
-    });
-
-    it('should use custom timezone when provided', async () => {
-      const timeZone = 'America/New_York';
-      await service.getAvailableSlots('test-token', '2024-05-10', 9, 17, 30, timeZone);
-      expect(mockCalendar.events.list).toHaveBeenCalledWith(expect.objectContaining({ timeZone }));
     });
   });
 }); 

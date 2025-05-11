@@ -8,6 +8,15 @@ export class User extends Document {
 
   @Prop({ required: true })
   name: string;
+
+  @Prop({ required: true })
+  googleId: string;
+
+  @Prop({ type: [{ type: String }], default: [] })
+  googleTokens: string[];
+
+  @Prop()
+  accessToken: string;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User); 
