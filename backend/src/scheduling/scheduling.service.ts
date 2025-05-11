@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, ConflictException, InternalServerErrorException, UnauthorizedException } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, InternalServerErrorException, UnauthorizedException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { CalendarService } from '../calendar/calendar.service';
@@ -10,6 +10,19 @@ import * as nodemailer from 'nodemailer';
 import { Client } from '@hubspot/api-client';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from '../auth/auth.service';
+import axios from 'axios';
+import { FilterOperatorEnum, PublicObjectSearchRequest } from '@hubspot/api-client/lib/codegen/crm/contacts';
+import { AssociationSpecAssociationCategoryEnum } from '@hubspot/api-client/lib/codegen/crm/objects';
+
+interface HubSpotContact {
+  id: string;
+  properties: {
+    email?: string;
+    firstname?: string;
+    lastname?: string;
+    hs_notes_latest?: string;
+  };
+}
 
 @Injectable()
 export class SchedulingService {
@@ -17,6 +30,7 @@ export class SchedulingService {
   private readonly defaultStartHour = 9;
   private readonly defaultEndHour = 17;
   private readonly defaultSlotDuration = 30;
+  private readonly logger = new Logger(SchedulingService.name);
 
   constructor(
     private readonly calendarService: CalendarService,
@@ -44,6 +58,7 @@ export class SchedulingService {
       'SMTP_FROM',
       'ADVISOR_EMAIL',
       'GOOGLE_ACCESS_TOKEN',
+      'LINKEDIN_SCRAPING_SERVICE_URL',
     ];
 
     const missingVars = requiredVars.filter(varName => !this.configService.get<string>(varName));
@@ -275,61 +290,137 @@ export class SchedulingService {
     return date instanceof Date && !isNaN(date.getTime());
   }
 
+  private async getHubSpotContact(email: string): Promise<HubSpotContact | null> {
+    try {
+      const searchRequest: PublicObjectSearchRequest = {
+        filterGroups: [
+          {
+            filters: [
+              {
+                propertyName: 'email',
+                operator: FilterOperatorEnum.Eq,
+                value: email,
+              },
+            ],
+          },
+        ],
+        sorts: ['createdate'],
+        properties: ['email', 'firstname', 'lastname', 'hs_notes_latest'],
+        limit: 1,
+      };
+
+      const response = await this.hubspotClient.crm.contacts.searchApi.doSearch(searchRequest);
+      return response.results[0] || null;
+    } catch (error) {
+      this.logger.warn(`Failed to fetch HubSpot contact for ${email}: ${error.message}`);
+      return null;
+    }
+  }
+
+  private async getLinkedInContent(linkedInUrl: string): Promise<string> {
+    try {
+      // Replace with actual LinkedIn scraping service URL
+      const scrapingServiceUrl = this.configService.get<string>('LINKEDIN_SCRAPING_SERVICE_URL');
+      if (!scrapingServiceUrl) {
+        this.logger.warn('LinkedIn scraping service URL not configured');
+        return 'Not available';
+      }
+
+      const response = await axios.get<string>(scrapingServiceUrl, {
+        params: { url: linkedInUrl }
+      });
+      return response.data;
+    } catch (error) {
+      this.logger.warn(`Failed to fetch LinkedIn content for ${linkedInUrl}: ${error.message}`);
+      return 'Not available';
+    }
+  }
+
   private async sendNotification(booking: Booking) {
     try {
-      // Send email notification
       const transporter = nodemailer.createTransport({
         host: this.configService.get<string>('SMTP_HOST'),
         port: parseInt(this.configService.get<string>('SMTP_PORT') || '587'),
-        secure: true,
+        secure: false,
         auth: {
           user: this.configService.get<string>('SMTP_USER'),
           pass: this.configService.get<string>('SMTP_PASS'),
         },
       });
 
+      // Get HubSpot contact information
+      const hubspotContact = await this.getHubSpotContact(booking.email);
+      
+      // Get LinkedIn content if URL is provided
+      let linkedInContent = 'Not available';
+      if (booking.metadata?.linkedInUrl) {
+        linkedInContent = await this.getLinkedInContent(booking.metadata.linkedInUrl);
+      }
+
+      // Augment answers with context
+      const augmentedAnswers = booking.answers.map(answer => {
+        const hubspotNote = hubspotContact?.properties?.hs_notes_latest || '';
+        return `${answer}\nContext: ${hubspotNote || linkedInContent}`;
+      }).join('\n');
+
+      // Send email notification
       await transporter.sendMail({
         from: this.configService.get<string>('SMTP_FROM'),
         to: this.configService.get<string>('ADVISOR_EMAIL'),
         subject: 'New Booking Notification',
-        text: `New booking from ${booking.email} for ${new Date(booking.slot.start).toLocaleString()}`,
+        text: `New booking from ${booking.email} for ${new Date(booking.slot.start).toLocaleString()}\nLinkedIn: ${booking.metadata?.linkedInUrl || 'Not provided'}\nAnswers:\n${augmentedAnswers}`,
       });
 
-      // Update HubSpot contact
-      try {
-        const contact = await this.hubspotClient.crm.contacts.basicApi.create({
-          properties: {
-            email: booking.email,
-            firstname: booking.email.split('@')[0],
-            lastname: '',
-          },
-        });
-
-        // Create a note about the booking
+      // Create HubSpot note if contact exists
+      if (hubspotContact) {
         await this.hubspotClient.crm.objects.notes.basicApi.create({
           properties: {
-            hs_note_body: `Booking scheduled for ${new Date(booking.slot.start).toLocaleString()}`,
+            hs_note_body: `New booking scheduled for ${new Date(booking.slot.start).toLocaleString()}\nAnswers:\n${augmentedAnswers}`,
             hs_timestamp: new Date().toISOString(),
           },
           associations: [
             {
-              to: { id: contact.id },
+              to: { id: hubspotContact.id },
               types: [
                 {
-                  associationCategory: 'HUBSPOT_DEFINED' as any,
+                  associationCategory: AssociationSpecAssociationCategoryEnum.HubspotDefined,
                   associationTypeId: 1,
                 },
               ],
             },
           ],
         });
-      } catch (error) {
-        // Log error but don't fail the booking
-        console.error('Failed to update HubSpot:', error);
       }
     } catch (error) {
-      console.error('Failed to send notification:', error);
-      // Don't throw the error as notification failure shouldn't affect the booking
+      this.logger.error('Failed to send notification:', error);
+      // Don't throw the error to prevent blocking the booking process
     }
+  }
+
+  async getMeetings(userId: string) {
+    const bookings = await this.bookingModel.find({ createdBy: userId }).exec();
+    
+    return Promise.all(bookings.map(async booking => {
+      const hubspotContact = await this.getHubSpotContact(booking.email);
+      let linkedInContent = 'Not available';
+      
+      if (booking.metadata?.linkedInUrl) {
+        linkedInContent = await this.getLinkedInContent(booking.metadata.linkedInUrl);
+      }
+
+      const augmentedNotes = booking.answers.map(answer => {
+        const hubspotNote = hubspotContact?.properties?.hs_notes_latest || '';
+        return `${answer}\nContext: ${hubspotNote || linkedInContent}`;
+      }).join('\n');
+
+      return {
+        ...booking.toObject(),
+        augmentedNotes,
+        hubspotContact: hubspotContact ? {
+          id: hubspotContact.id,
+          properties: hubspotContact.properties,
+        } : null,
+      };
+    }));
   }
 } 

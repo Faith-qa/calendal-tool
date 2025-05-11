@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, UnauthorizedException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { google } from 'googleapis';
+import { google, calendar_v3 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
 import { addMinutes, isBefore, isAfter, parseISO, startOfDay } from 'date-fns';
@@ -74,26 +74,46 @@ export class CalendarService {
     }
   }
 
+  private dedupeSlots(slots: CalendarSlot[]): CalendarSlot[] {
+    const uniqueSlots = new Map<string, CalendarSlot>();
+    
+    slots.forEach(slot => {
+      const key = `${slot.start}-${slot.end}`;
+      if (!uniqueSlots.has(key)) {
+        uniqueSlots.set(key, slot);
+      }
+    });
+
+    return Array.from(uniqueSlots.values());
+  }
+
   async getEvents(
-    accessToken: string,
+    accessToken: string | string[],
     startTime: string,
     endTime: string,
     timeZone: string = 'UTC',
-  ): Promise<any[]> {
+  ): Promise<calendar_v3.Schema$Event[]> {
     try {
-      const auth = this.createGoogleAuthClient(accessToken);
-      const calendar = google.calendar({ version: 'v3', auth });
+      const tokens = Array.isArray(accessToken) ? accessToken : [accessToken];
+      const allEvents: calendar_v3.Schema$Event[] = [];
 
-      const response = await calendar.events.list({
-        calendarId: 'primary',
-        timeMin: startTime,
-        timeMax: endTime,
-        singleEvents: true,
-        orderBy: 'startTime',
-        timeZone,
-      });
+      for (const token of tokens) {
+        const auth = this.createGoogleAuthClient(token);
+        const calendar = google.calendar({ version: 'v3', auth });
 
-      return response.data.items || [];
+        const response = await calendar.events.list({
+          calendarId: 'primary',
+          timeMin: startTime,
+          timeMax: endTime,
+          singleEvents: true,
+          orderBy: 'startTime',
+          timeZone,
+        });
+
+        allEvents.push(...(response.data.items || []));
+      }
+
+      return allEvents;
     } catch (error) {
       if (error.response?.status === 401) {
         throw new UnauthorizedException('Invalid or expired access token');
@@ -106,7 +126,7 @@ export class CalendarService {
   }
 
   async getAvailableSlots(
-    accessToken: string,
+    accessToken: string | string[],
     date: string,
     startHour: number,
     endHour: number,
@@ -118,71 +138,75 @@ export class CalendarService {
       this.validateTimeParameters(startHour, endHour, slotDuration);
       this.validateDate(date);
 
-      this.oauth2Client.setCredentials({ access_token: accessToken });
-      const calendar = google.calendar({ version: 'v3', auth: this.oauth2Client });
+      const tokens = Array.isArray(accessToken) ? accessToken : [accessToken];
+      const allSlots: CalendarSlot[] = [];
 
-      // Convert local time to UTC for Google Calendar API
-      const startTimeLocal = `${date}T${startHour.toString().padStart(2, '0')}:00:00`;
-      const endTimeLocal = `${date}T${endHour.toString().padStart(2, '0')}:00:00`;
-      
-      const startTimeUtc = toZonedTime(startTimeLocal, timezone);
-      const endTimeUtc = toZonedTime(endTimeLocal, timezone);
+      for (const token of tokens) {
+        this.oauth2Client.setCredentials({ access_token: token });
+        const calendar = google.calendar({ version: 'v3', auth: this.oauth2Client });
 
-      // Get calendar events for the specified date
-      const response = await calendar.events.list({
-        calendarId: 'primary',
-        timeMin: startTimeUtc.toISOString(),
-        timeMax: endTimeUtc.toISOString(),
-        singleEvents: true,
-        orderBy: 'startTime',
-        timeZone: timezone,
-      });
-
-      const events = response.data.items || [];
-      const busySlots: BusySlot[] = events.map((event) => ({
-        start: event.start?.dateTime || event.start?.date || '',
-        end: event.end?.dateTime || event.end?.date || '',
-      })).filter(slot => slot.start && slot.end);
-
-      // Generate available slots in local timezone
-      const slots: CalendarSlot[] = [];
-      let currentTime = startTimeUtc;
-
-      while (isBefore(currentTime, endTimeUtc)) {
-        const slotEnd = addMinutes(currentTime, slotDuration);
+        // Convert local time to UTC for Google Calendar API
+        const startTimeLocal = `${date}T${startHour.toString().padStart(2, '0')}:00:00`;
+        const endTimeLocal = `${date}T${endHour.toString().padStart(2, '0')}:00:00`;
         
-        // Skip if slot would exceed end time
-        if (isAfter(slotEnd, endTimeUtc)) {
-          break;
-        }
+        const startTimeUtc = toZonedTime(startTimeLocal, timezone);
+        const endTimeUtc = toZonedTime(endTimeLocal, timezone);
 
-        const slot = {
-          id: `${currentTime.toISOString()}-${slotEnd.toISOString()}`,
-          start: formatInTimeZone(currentTime, timezone, "yyyy-MM-dd'T'HH:mm:ssXXX"),
-          end: formatInTimeZone(slotEnd, timezone, "yyyy-MM-dd'T'HH:mm:ssXXX"),
-        };
+        // Get calendar events for the specified date
+        const response = await calendar.events.list({
+          calendarId: 'primary',
+          timeMin: startTimeUtc.toISOString(),
+          timeMax: endTimeUtc.toISOString(),
+          singleEvents: true,
+          orderBy: 'startTime',
+          timeZone: timezone,
+        });
 
-        // Check if slot overlaps with any busy slots
-        const isAvailable = !busySlots.some(
-          (busy) => {
-            const busyStart = parseISO(busy.start);
-            const busyEnd = parseISO(busy.end);
-            return (
-              (isAfter(currentTime, busyStart) && isBefore(currentTime, busyEnd)) ||
-              (isAfter(slotEnd, busyStart) && isBefore(slotEnd, busyEnd)) ||
-              (isBefore(currentTime, busyStart) && isAfter(slotEnd, busyEnd))
-            );
+        const events = response.data.items || [];
+        const busySlots: BusySlot[] = events.map((event) => ({
+          start: event.start?.dateTime || event.start?.date || '',
+          end: event.end?.dateTime || event.end?.date || '',
+        })).filter(slot => slot.start && slot.end);
+
+        // Generate available slots in local timezone
+        let currentTime = startTimeUtc;
+
+        while (isBefore(currentTime, endTimeUtc)) {
+          const slotEnd = addMinutes(currentTime, slotDuration);
+          
+          // Skip if slot would exceed end time
+          if (isAfter(slotEnd, endTimeUtc)) {
+            break;
           }
-        );
 
-        if (isAvailable) {
-          slots.push(slot);
+          const slot = {
+            id: `${currentTime.toISOString()}-${slotEnd.toISOString()}`,
+            start: formatInTimeZone(currentTime, timezone, "yyyy-MM-dd'T'HH:mm:ssXXX"),
+            end: formatInTimeZone(slotEnd, timezone, "yyyy-MM-dd'T'HH:mm:ssXXX"),
+          };
+
+          // Check if slot overlaps with any busy slots
+          const isAvailable = !busySlots.some(
+            (busy) => {
+              const busyStart = parseISO(busy.start);
+              const busyEnd = parseISO(busy.end);
+              return (
+                (isAfter(currentTime, busyStart) && isBefore(currentTime, busyEnd)) ||
+                (isAfter(slotEnd, busyStart) && isBefore(slotEnd, busyEnd)) ||
+                (isBefore(currentTime, busyStart) && isAfter(slotEnd, busyEnd))
+              );
+            }
+          );
+
+          if (isAvailable) {
+            allSlots.push(slot);
+          }
+
+          currentTime = slotEnd;
         }
-
-        currentTime = slotEnd;
       }
 
-      return slots;
+      return this.dedupeSlots(allSlots);
     } catch (error) {
       if (error.response?.status === 401) {
         throw new UnauthorizedException('Invalid access token');
