@@ -1,21 +1,6 @@
 import { Request } from 'express';
-
-declare global {
-  namespace Express {
-    interface User {
-      id?: string;
-      token?: {
-        access_token: string;
-      };
-    }
-  }
-}
+import { User } from '../auth/user.schema';
 
 export interface RequestWithUser extends Request {
-  user?: {
-    id: string;
-  };
-  token?: {
-    access_token: string;
-  };
-} 
+  user?: User & { accessToken: string; googleEmail?: string; hubspotEmail?: string; _id: string; refreshToken?: string };
+}

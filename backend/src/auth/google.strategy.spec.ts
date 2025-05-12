@@ -1,96 +1,81 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { GoogleStrategy } from './google.strategy';
-import { AuthService } from './auth.service';
+import { PassportStrategy } from '@nestjs/passport';
+import { Strategy, VerifyCallback } from 'passport-google-oauth20';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { UnauthorizedException } from '@nestjs/common';
+import { AuthService } from './auth.service';
+import { User } from './user.schema';
 
-describe('GoogleStrategy', () => {
-  let strategy: GoogleStrategy;
-  let authService: AuthService;
+@Injectable()
+export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
+  constructor(
+      private readonly authService: AuthService,
+      private readonly configService: ConfigService,
+  ) {
+    const clientID = configService.get<string>('GOOGLE_CLIENT_ID');
+    const clientSecret = configService.get<string>('GOOGLE_CLIENT_SECRET');
+    const callbackURL = configService.get<string>('GOOGLE_CALLBACK_URL');
 
-  const mockAuthService = {
-    validateOAuthLogin: jest.fn(),
-  };
+    if (!clientID || !clientSecret || !callbackURL) {
+      throw new Error('Missing Google OAuth configuration: clientID, clientSecret, or callbackURL');
+    }
 
-  const mockConfigService = {
-    get: jest.fn(),
-  };
+    console.log('GoogleStrategy configuration:', { clientID, clientSecret, callbackURL });
 
-  beforeEach(async () => {
-    mockConfigService.get.mockImplementation((key: string) => {
-      switch (key) {
-        case 'GOOGLE_CLIENT_ID':
-          return 'test-client-id';
-        case 'GOOGLE_CLIENT_SECRET':
-          return 'test-client-secret';
-        case 'GOOGLE_CALLBACK_URL':
-          return 'http://localhost:3000/auth/google/callback';
-        default:
-          return undefined;
+    super({
+      clientID,
+      clientSecret,
+      callbackURL,
+      scope: ['email', 'profile', 'https://www.googleapis.com/auth/calendar.readonly'], // Add calendar readonly scope
+    });
+  }
+
+  async validate(
+      accessToken: string,
+      refreshToken: string,
+      profile: any,
+      done: VerifyCallback,
+  ): Promise<void> {
+    try {
+      console.log('Google OAuth response:', {
+        accessToken,
+        refreshToken: refreshToken || 'Not provided',
+        profile: JSON.stringify(profile, null, 2),
+      });
+
+      if (!profile.emails || profile.emails.length === 0) {
+        throw new UnauthorizedException('No email found in profile');
       }
-    });
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        GoogleStrategy,
-        {
-          provide: AuthService,
-          useValue: mockAuthService,
-        },
-        {
-          provide: ConfigService,
-          useValue: mockConfigService,
-        },
-      ],
-    }).compile();
 
-    strategy = module.get<GoogleStrategy>(GoogleStrategy);
-    authService = module.get<AuthService>(AuthService);
-  });
+      if (!profile.displayName) {
+        throw new UnauthorizedException('No name found in profile');
+      }
 
-  describe('validate', () => {
-    const mockAccessToken = 'test-access-token';
-    const mockRefreshToken = 'test-refresh-token';
-    const mockProfile = {
-      id: '123',
-      emails: [{ value: 'test@example.com' }],
-      displayName: 'Test User',
-    };
-    const mockDone = jest.fn();
+      const { emails, displayName, id } = profile;
+      const email = emails[0].value;
+      const name = displayName;
+      const googleId = id;
 
-    it('should return user when validation succeeds', async () => {
-      const mockUser = { id: '1', email: 'test@example.com' };
-      mockAuthService.validateOAuthLogin.mockResolvedValue({ user: mockUser, token: mockAccessToken });
+      if (!email) {
+        throw new UnauthorizedException('No email found in profile');
+      }
 
-      await strategy.validate(mockAccessToken, mockRefreshToken, mockProfile, mockDone);
-      expect(mockDone).toHaveBeenCalledWith(null, { token: { access_token: mockAccessToken } });
-      expect(mockAuthService.validateOAuthLogin).toHaveBeenCalledWith('test@example.com', 'Test User', mockAccessToken);
-    });
-
-    it('should throw UnauthorizedException when email is missing', async () => {
-      const profileWithoutEmail = {
-        ...mockProfile,
-        emails: [],
+      const { user, token } = await this.authService.validateOAuthLogin(email, name, accessToken, googleId);
+      const validatedUser: User = {
+        ...user.toObject(),
+        accessToken: token,
       };
-
-      await strategy.validate(mockAccessToken, mockRefreshToken, profileWithoutEmail, mockDone);
-      expect(mockDone).toHaveBeenCalledWith(new UnauthorizedException('No email found in profile'), false);
-    });
-
-    it('should throw UnauthorizedException when name is missing', async () => {
-      const profileWithoutName = {
-        ...mockProfile,
-        displayName: undefined,
-      };
-
-      await strategy.validate(mockAccessToken, mockRefreshToken, profileWithoutName, mockDone);
-      expect(mockDone).toHaveBeenCalledWith(new UnauthorizedException('No name found in profile'), false);
-    });
-
-    it('should throw UnauthorizedException when user validation fails', async () => {
-      mockAuthService.validateOAuthLogin.mockRejectedValue(new Error('Validation failed'));
-
-      await strategy.validate(mockAccessToken, mockRefreshToken, mockProfile, mockDone);
-      expect(mockDone).toHaveBeenCalledWith(new UnauthorizedException('Authentication failed'), false);
-    });
-  });
-}); 
+      done(null, validatedUser);
+    } catch (error) {
+      console.error('Google strategy validation error:', {
+        message: error.message,
+        stack: error.stack,
+        profile: profile ? JSON.stringify(profile, null, 2) : 'No profile',
+      });
+      if (error instanceof UnauthorizedException) {
+        done(error, false);
+      } else {
+        done(new UnauthorizedException('Authentication failed'), false);
+      }
+    }
+  }
+}
