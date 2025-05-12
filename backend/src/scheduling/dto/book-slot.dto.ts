@@ -1,20 +1,17 @@
-import { IsEmail, IsString, IsArray, IsOptional, IsObject, IsDateString, Matches, ValidateIf } from 'class-validator';
+import { IsString, IsOptional, IsArray } from 'class-validator';
 
 export class BookSlotDto {
   @IsString()
-  @Matches(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z-\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/, {
-    message: 'slotId must be in format YYYY-MM-DDTHH:mm:ss.sssZ-YYYY-MM-DDTHH:mm:ss.sssZ',
-  })
   slotId: string;
 
-  @IsEmail()
+  @IsString()
   email: string;
 
   @IsArray()
+  @IsString({ each: true })
   @IsOptional()
-  answers?: string[];
+  answers?: string[] = []; // Default to empty array
 
-  @IsObject()
   @IsOptional()
   metadata?: Record<string, any>;
 
@@ -22,10 +19,7 @@ export class BookSlotDto {
   @IsOptional()
   schedulingLinkId?: string;
 
-  @ValidateIf((o) => o.date !== undefined)
-  @IsDateString()
-  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
-    message: 'Date must be in YYYY-MM-DD format',
-  })
+  @IsString()
+  @IsOptional()
   date?: string;
-} 
+}

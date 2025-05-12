@@ -11,7 +11,11 @@ export class AuthService {
       private jwtService: JwtService,
   ) {}
 
-  async googleLogin(accessToken: string, refreshToken: string, profile: any): Promise<{ user: User; token: string }> {
+  async googleLogin(
+      accessToken: string,
+      refreshToken: string,
+      profile: any,
+  ): Promise<{ user: User; token: string }> {
     try {
       let user = await this.userModel.findOne({ googleId: profile.id }).exec();
 
@@ -25,7 +29,11 @@ export class AuthService {
       } else {
         const updatedUser = await this.userModel.findOneAndUpdate(
             { googleId: profile.id },
-            { $addToSet: { googleAccounts: { email: profile.emails[0].value, accessToken } } },
+            {
+              $addToSet: {
+                googleAccounts: { email: profile.emails[0].value, accessToken },
+              },
+            },
             { new: true },
         );
         if (!updatedUser) {
@@ -35,7 +43,7 @@ export class AuthService {
       }
 
       const token = this.jwtService.sign({
-        sub: user.id, // Use id getter instead of _id.toString()
+        sub: user.id,
         email: user.email,
         name: user.name,
         googleAccounts: user.googleAccounts,
@@ -53,7 +61,12 @@ export class AuthService {
     }
   }
 
-  async validateOAuthLogin(email: string, name: string, accessToken: string, googleId: string): Promise<{ user: User; token: string }> {
+  async validateOAuthLogin(
+      email: string,
+      name: string,
+      accessToken: string,
+      googleId: string,
+  ): Promise<{ user: User; token: string }> {
     try {
       let user = await this.userModel.findOne({ email });
       if (!user) {
@@ -82,7 +95,7 @@ export class AuthService {
       }
 
       const token = this.jwtService.sign({
-        sub: user.id, // Use id getter instead of _id.toString()
+        sub: user.id,
         email: user.email,
         name: user.name,
         googleAccounts: user.googleAccounts,
@@ -102,11 +115,16 @@ export class AuthService {
     }
   }
 
-  async addGoogleAccount(userId: string, email: string, accessToken: string): Promise<User> {
+  async addGoogleAccount(
+      userId: string, // Ensure userId is a string
+      email: string,
+      accessToken: string,
+      refreshToken: string, // Fix parameter name from p0 to refreshToken
+  ): Promise<User> {
     try {
       const user = await this.userModel.findByIdAndUpdate(
-          userId,
-          { $addToSet: { googleAccounts: { email, accessToken } } },
+          userId, // userId is a string
+          { $addToSet: { googleAccounts: { email, accessToken, refreshToken: refreshToken || '' } } },
           { new: true },
       );
       if (!user) {
@@ -121,6 +139,75 @@ export class AuthService {
         userId,
         email,
       });
+      throw error;
+    }
+  }
+
+  async validateHubSpotLogin(
+      email: string,
+      accessToken: string,
+      refreshToken: string,
+  ): Promise<{ user: User; token: string }> {
+    try {
+      let user = await this.userModel.findOne({ email });
+      if (!user) {
+        user = await this.userModel.create({
+          email,
+          name: email.split('@')[0],
+          googleId: 'hubspot-' + email,
+          hubspotAccounts: [{ email, accessToken, refreshToken }],
+        });
+      } else {
+        const updatedUser = await this.userModel.findOneAndUpdate(
+            { email },
+            {
+              $addToSet: {
+                hubspotAccounts: { email, accessToken, refreshToken },
+              },
+            },
+            { new: true },
+        );
+        if (!updatedUser) {
+          throw new Error('Failed to update user');
+        }
+        user = updatedUser;
+      }
+
+      const token = this.jwtService.sign({
+        sub: user.id,
+        email: user.email,
+        name: user.name,
+        googleAccounts: user.googleAccounts,
+        hubspotAccounts: user.hubspotAccounts,
+        accessToken,
+      });
+      return { user, token };
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  async addHubSpotAccount(
+      userId: string, // Ensure userId is a string
+      email: string,
+      accessToken: string,
+      refreshToken: string,
+  ): Promise<User> {
+    try {
+      const user = await this.userModel.findByIdAndUpdate(
+          userId, // userId is a string
+          {
+            $addToSet: { hubspotAccounts: { email, accessToken, refreshToken } },
+          },
+          { new: true },
+      );
+      if (!user) {
+        throw new Error('User not found');
+      }
+      console.log('Added HubSpot account to user:', { userId, email });
+      return user;
+    } catch (error) {
+      console.error('addHubSpotAccount error:', error.message);
       throw error;
     }
   }

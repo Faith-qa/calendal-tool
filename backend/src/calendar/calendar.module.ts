@@ -1,16 +1,15 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { CalendarService } from './calendar.service';
 import { CalendarController } from './calendar.controller';
-import { AuthModule } from '../auth/auth.module';
+import { CalendarService } from './calendar.service';
+import { AuthModule } from '../auth/auth.module'; // Import AuthModule
 
 @Module({
   imports: [
     ConfigModule,
-    AuthModule,
+    AuthModule, // Import AuthModule to access UserModel
   ],
   controllers: [CalendarController],
   providers: [CalendarService],
-  exports: [CalendarService],
 })
-export class CalendarModule {} 
+export class CalendarModule {}

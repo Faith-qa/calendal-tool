@@ -6,16 +6,16 @@ import ScheduleMeeting from './pages/ScheduleMeeting';
 
 const App: React.FC = () => {
   return (
-    <AuthProvider>
       <Router>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/dashboard" element={<AdvisorDashboard />} />
-          <Route path="/schedule/:linkId" element={<ScheduleMeeting />} />
-          <Route path="/" element={<Login />} />
-        </Routes>
+        <AuthProvider>
+          <Routes>
+            <Route path="/" element={<Login />} />
+            <Route path="/login" element={<Login />} /> {/* Add /login route */}
+            <Route path="/dashboard" element={<AdvisorDashboard />} />
+            <Route path="/schedule" element={<ScheduleMeeting />} />
+          </Routes>
+        </AuthProvider>
       </Router>
-    </AuthProvider>
   );
 };
 

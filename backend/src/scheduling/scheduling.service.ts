@@ -13,8 +13,8 @@ import { AuthService } from '../auth/auth.service';
 import axios from 'axios';
 import { FilterOperatorEnum, PublicObjectSearchRequest } from '@hubspot/api-client/lib/codegen/crm/contacts';
 import { AssociationSpecAssociationCategoryEnum } from '@hubspot/api-client/lib/codegen/crm/objects';
-import { google } from 'googleapis';
 import { User } from '../auth/user.schema';
+import {google} from "googleapis";
 
 interface HubSpotContact {
   id: string;
@@ -35,19 +35,18 @@ export class SchedulingService {
   private readonly logger = new Logger(SchedulingService.name);
 
   constructor(
-    private readonly calendarService: CalendarService,
-    @InjectModel(SchedulingLink.name) private schedulingLinkModel: Model<SchedulingLink>,
-    @InjectModel(Booking.name) private bookingModel: Model<Booking>,
-    @InjectModel(User.name) private userModel: Model<User>,
-    private readonly configService: ConfigService,
-    private readonly authService: AuthService,
+      private readonly calendarService: CalendarService,
+      @InjectModel(SchedulingLink.name) private schedulingLinkModel: Model<SchedulingLink>,
+      @InjectModel(Booking.name) private bookingModel: Model<Booking>,
+      @InjectModel(User.name) private userModel: Model<User>,
+      private readonly configService: ConfigService,
+      private readonly authService: AuthService,
   ) {
     this.validateEnvironmentVariables();
     this.hubspotClient = new Client({ accessToken: this.configService.get<string>('HUBSPOT_ACCESS_TOKEN') });
   }
 
   private validateEnvironmentVariables() {
-    // Skip validation in test environment
     if (process.env.NODE_ENV === 'test') {
       return;
     }
@@ -67,7 +66,7 @@ export class SchedulingService {
     const missingVars = requiredVars.filter(varName => !this.configService.get<string>(varName));
     if (missingVars.length > 0) {
       throw new InternalServerErrorException(
-        `Missing required environment variables: ${missingVars.join(', ')}`,
+          `Missing required environment variables: ${missingVars.join(', ')}`,
       );
     }
   }
@@ -78,12 +77,10 @@ export class SchedulingService {
       throw new BadRequestException('Invalid scheduling link');
     }
 
-    // Check expiration
     if (link.expiresAt && new Date(link.expiresAt) < new Date()) {
       throw new BadRequestException('Scheduling link has expired');
     }
 
-    // Check max uses
     if (link.maxUses && link.uses >= link.maxUses) {
       throw new BadRequestException('Scheduling link has reached maximum uses');
     }
@@ -119,10 +116,8 @@ export class SchedulingService {
 
   async bookSlot(userId: string, bookSlotDto: BookSlotDto) {
     try {
-      const { slotId, email, answers, metadata, schedulingLinkId, date } = bookSlotDto;
+      const { slotId, email, answers = [], metadata, schedulingLinkId, date } = bookSlotDto;
 
-      // Robustly extract startTime and endTime from slotId (format: 'startISO-endISO')
-      // Use regex to match two ISO strings separated by a single '-'
       const slotIdRegex = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)-(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)$/;
       const match = slotIdRegex.exec(slotId);
       let startTime: string, endTime: string;
@@ -133,47 +128,44 @@ export class SchedulingService {
         throw new BadRequestException('Invalid slotId format');
       }
 
-      // Validate email
       if (!email || !this.isValidEmail(email)) {
         throw new BadRequestException('Invalid email format');
       }
 
-      // Validate date if provided
       if (date) {
         this.validateDate(date);
       }
 
-      // Get available slots for the date
+      const user = await this.userModel.findById(userId);
+      if (!user) {
+        throw new UnauthorizedException('User not found');
+      }
+
       const availableSlots = await this.calendarService.getAvailableSlots(
-        userId,
-        date || new Date().toISOString().split('T')[0],
-        9, // Default start hour
-        17, // Default end hour
-        30, // Default slot duration
-        'UTC' // Default timezone
+          user,
+          date || new Date().toISOString().split('T')[0],
+          9,
+          17,
+          30,
       );
 
-      // Check if the requested slot is available
       const requestedSlot = availableSlots.find(
-        (slot) => slot.start === startTime && slot.end === endTime,
+          (slot) => slot.start === startTime && slot.end === endTime,
       );
 
       if (!requestedSlot) {
         throw new ConflictException('Requested slot is not available');
       }
 
-      // Create calendar event
       try {
         const event = await this.calendarService.createEvent(
-          userId,
-          startTime,
-          endTime,
-          email,
-          answers,
-          'UTC'
+            user,
+            startTime,
+            endTime,
+            email,
+            answers,
         );
 
-        // Create booking record
         const booking = await this.bookingModel.create({
           userId,
           slotId,
@@ -203,31 +195,25 @@ export class SchedulingService {
       throw new BadRequestException(error.message);
     }
   }
-
   async createSchedulingLink(createLinkDto: CreateSchedulingLinkDto, userId: string) {
     const { questions, meetingLength, maxDaysInAdvance, startHour, endHour } = createLinkDto;
 
-    // Validate meeting length
     if (meetingLength < 15 || meetingLength > 120 || meetingLength % 5 !== 0) {
       throw new BadRequestException('Meeting length must be between 15 and 120 minutes and a multiple of 5');
     }
 
-    // Validate max days in advance
     if (maxDaysInAdvance < 1 || maxDaysInAdvance > 90) {
       throw new BadRequestException('Max days in advance must be between 1 and 90');
     }
 
-    // Validate time range
     if (startHour < 0 || startHour > 23 || endHour < startHour || endHour > 24) {
       throw new BadRequestException('Invalid time range');
     }
 
-    // Validate questions
     if (!questions || questions.length === 0) {
       throw new BadRequestException('At least one question is required');
     }
 
-    // Create scheduling link
     const link = await this.schedulingLinkModel.create({
       createdBy: userId,
       questions,
@@ -251,33 +237,32 @@ export class SchedulingService {
   }
 
   async getAvailableTimesForLink(linkId: string, date: string) {
-    // Find scheduling link first
     const link = await this.schedulingLinkModel.findById(linkId);
     if (!link) {
       throw new BadRequestException('Scheduling link not found');
     }
 
-    // Check if link has expired
     if (link.expiresAt && new Date(link.expiresAt) < new Date()) {
       throw new BadRequestException('Scheduling link has expired');
     }
 
-    // Check if link has reached max uses
     if (link.maxUses && link.uses >= link.maxUses) {
       throw new BadRequestException('Scheduling link has reached maximum uses');
     }
 
-    // Validate date format after link validation
     this.validateDate(date);
 
-    // Get available slots
+    const user = await this.userModel.findById(link.createdBy);
+    if (!user) {
+      throw new UnauthorizedException('User not found');
+    }
+
     const availableSlots = await this.calendarService.getAvailableSlots(
-      link.createdBy,
-      date,
-      link.startHour,
-      link.endHour,
-      link.meetingLength,
-      'UTC' // Default timezone
+        user,
+        date,
+        link.startHour,
+        link.endHour,
+        link.meetingLength,
     );
 
     return availableSlots;
@@ -322,7 +307,6 @@ export class SchedulingService {
 
   private async getLinkedInContent(linkedInUrl: string): Promise<string> {
     try {
-      // Replace with actual LinkedIn scraping service URL
       const scrapingServiceUrl = this.configService.get<string>('LINKEDIN_SCRAPING_SERVICE_URL');
       if (!scrapingServiceUrl) {
         this.logger.warn('LinkedIn scraping service URL not configured');
@@ -351,22 +335,18 @@ export class SchedulingService {
         },
       });
 
-      // Get HubSpot contact information
       const hubspotContact = await this.getHubSpotContact(booking.email);
-      
-      // Get LinkedIn content if URL is provided
+
       let linkedInContent = 'Not available';
       if (booking.metadata?.linkedInUrl) {
         linkedInContent = await this.getLinkedInContent(booking.metadata.linkedInUrl);
       }
 
-      // Augment answers with context
       const augmentedAnswers = booking.answers.map(answer => {
         const hubspotNote = hubspotContact?.properties?.hs_notes_latest || '';
         return `${answer}\nContext: ${hubspotNote || linkedInContent}`;
       }).join('\n');
 
-      // Send email notification
       await transporter.sendMail({
         from: this.configService.get<string>('SMTP_FROM'),
         to: this.configService.get<string>('ADVISOR_EMAIL'),
@@ -374,7 +354,6 @@ export class SchedulingService {
         text: `New booking from ${booking.email} for ${new Date(booking.slot.start).toLocaleString()}\nLinkedIn: ${booking.metadata?.linkedInUrl || 'Not provided'}\nAnswers:\n${augmentedAnswers}`,
       });
 
-      // Create HubSpot note if contact exists
       if (hubspotContact) {
         await this.hubspotClient.crm.objects.notes.basicApi.create({
           properties: {
@@ -396,17 +375,16 @@ export class SchedulingService {
       }
     } catch (error) {
       this.logger.error('Failed to send notification:', error);
-      // Don't throw the error to prevent blocking the booking process
     }
   }
 
   async getMeetings(userId: string) {
     const bookings = await this.bookingModel.find({ createdBy: userId }).exec();
-    
+
     return Promise.all(bookings.map(async booking => {
       const hubspotContact = await this.getHubSpotContact(booking.email);
       let linkedInContent = 'Not available';
-      
+
       if (booking.metadata?.linkedInUrl) {
         linkedInContent = await this.getLinkedInContent(booking.metadata.linkedInUrl);
       }
@@ -428,7 +406,6 @@ export class SchedulingService {
   }
 
   async getGoogleCalendarEvents(userId: string) {
-    // Fetch the user's Google access token from your database
     const user = await this.userModel.findById(userId);
     if (!user || !user.accessToken) {
       throw new Error('Google access token not found for user');
@@ -439,7 +416,6 @@ export class SchedulingService {
 
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
 
-    // Fetch events (customize timeMin/timeMax as needed)
     const res = await calendar.events.list({
       calendarId: 'primary',
       timeMin: new Date().toISOString(),
@@ -450,4 +426,4 @@ export class SchedulingService {
 
     return res.data.items;
   }
-} 
+}

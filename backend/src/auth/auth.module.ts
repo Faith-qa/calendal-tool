@@ -6,6 +6,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { GoogleStrategy } from './google.strategy';
+import { HubSpotStrategy } from './hubspot.strategy';
 import { JwtStrategy } from './jwt.strategy';
 import { User, UserSchema } from './user.schema';
 
@@ -24,6 +25,7 @@ import { User, UserSchema } from './user.schema';
     ConfigModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, GoogleStrategy, JwtStrategy],
+  providers: [AuthService, GoogleStrategy, HubSpotStrategy, JwtStrategy],
+  exports: [MongooseModule.forFeature([{ name: User.name, schema: UserSchema }])], // Export UserModel
 })
 export class AuthModule {}

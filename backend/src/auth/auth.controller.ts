@@ -7,92 +7,108 @@ import { RequestWithUser } from '../types/express';
 import { User } from './user.schema';
 import { JwtService } from '@nestjs/jwt'; // Add this import
 
+
 @Controller('auth')
 export class AuthController {
   constructor(
       private readonly authService: AuthService,
       private readonly configService: ConfigService,
-      private readonly jwtService: JwtService, // Add JwtService
+      private readonly jwtService: JwtService,
   ) {}
 
   @Get('google')
   @UseGuards(AuthGuard('google'))
-  async googleAuth() {
-    // The guard will handle the redirect to Google automatically
-  }
+  async googleAuth() {}
 
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
   async googleAuthCallback(@Req() req: RequestWithUser, @Res() res: Response) {
-    try {
-      if (!req.user || !req.user.accessToken) {
-        console.error('Authentication failed: Invalid user data structure', { user: req.user });
-        throw new UnauthorizedException('Invalid user data structure');
-      }
-
-      return res.redirect(`http://localhost:5001?token=${req.user.accessToken}`);
-    } catch (error) {
-      console.error('Google callback error:', {
-        message: error.message,
-        stack: error.stack,
-        user: req.user,
-      });
-      if (error instanceof UnauthorizedException) {
-        return res.redirect('http://localhost:5001?error=auth_failed');
-      }
-      throw new InternalServerErrorException('Failed to process Google callback');
+    if (!req.user || !req.user.accessToken) {
+      throw new UnauthorizedException('Invalid user data structure');
     }
+    return res.redirect(`http://localhost:5001?token=${req.user.accessToken}`);
   }
 
   @UseGuards(AuthGuard('jwt'))
   @Get('google/connect')
   @UseGuards(AuthGuard('google'))
-  async connectGoogleAccount() {
-    // The guard will handle the redirect to Google automatically
-  }
+  async connectGoogleAccount() {}
 
   @UseGuards(AuthGuard('jwt'))
   @Get('google/connect/callback')
   @UseGuards(AuthGuard('google'))
   async connectGoogleCallback(@Req() req: RequestWithUser, @Res() res: Response) {
-    try {
-      if (!req.user || !req.user.accessToken || !req.user.googleEmail) {
-        console.error('Connect Google account failed: Invalid user data structure', { user: req.user });
-        throw new UnauthorizedException('Invalid user data structure');
-      }
-
-      // Ensure _id is a string
-      const userId = req.user._id?.toString();
-      if (!userId) {
-        throw new UnauthorizedException('User ID is missing');
-      }
-
-      // Update the user's googleAccounts with the new token and email
-      const user = await this.authService.addGoogleAccount(
-          userId,
-          req.user.googleEmail,
-          req.user.accessToken,
-      );
-
-      const token = this.jwtService.sign({
-        sub: user._id,
-        email: user.email,
-        name: user.name,
-        googleAccounts: user.googleAccounts,
-        accessToken: req.user.accessToken,
-      });
-
-      return res.redirect(`http://localhost:5001/dashboard?token=${token}`);
-    } catch (error) {
-      console.error('Google connect callback error:', {
-        message: error.message,
-        stack: error.stack,
-        user: req.user,
-      });
-      if (error instanceof UnauthorizedException) {
-        return res.redirect('http://localhost:5001/dashboard?error=connect_failed');
-      }
-      throw new InternalServerErrorException('Failed to process Google connect callback');
+    if (!req.user || !req.user.accessToken || !req.user.googleEmail) {
+      throw new UnauthorizedException('Invalid user data structure');
     }
+
+    const userId = req.user.id;
+    if (!userId) {
+      throw new UnauthorizedException('User ID is missing');
+    }
+
+    const user = await this.authService.addGoogleAccount(
+        userId,
+        req.user.googleEmail,
+        req.user.accessToken,
+        req.user.refreshToken || '',
+    );
+
+    const token = this.jwtService.sign({
+      sub: user.id,
+      email: user.email,
+      name: user.name,
+      googleAccounts: user.googleAccounts,
+      hubspotAccounts: user.hubspotAccounts,
+      accessToken: req.user.accessToken,
+    });
+
+    return res.redirect(`http://localhost:5001/dashboard?token=${token}`);
+  }
+
+  @Get('hubspot')
+  @UseGuards(AuthGuard('hubspot'))
+  async hubspotAuth() {}
+
+  @Get('hubspot/callback')
+  @UseGuards(AuthGuard('hubspot'))
+  async hubspotAuthCallback(@Req() req: RequestWithUser, @Res() res: Response) {
+    if (!req.user || !req.user.accessToken) {
+      throw new UnauthorizedException('Invalid user data structure');
+    }
+    return res.redirect(`http://localhost:5001?token=${req.user.accessToken}`);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Get('hubspot/connect')
+  @UseGuards(AuthGuard('hubspot'))
+  async connectHubSpotAccount() {}
+
+  @UseGuards(AuthGuard('jwt'))
+  @Get('hubspot/connect/callback')
+  @UseGuards(AuthGuard('hubspot'))
+  async connectHubSpotCallback(@Req() req: RequestWithUser, @Res() res: Response) {
+    if (!req.user || !req.user.accessToken || !req.user.hubspotEmail) {
+      throw new UnauthorizedException('Invalid user data structure');
+    }
+
+    const userId = req.user.id;
+    const user = await this.authService.addHubSpotAccount(
+        userId,
+        req.user.hubspotEmail,
+        req.user.accessToken,
+        req.user.refreshToken || '',
+    );
+
+    const token = this.jwtService.sign({
+      sub: user.id,
+      email: user.email,
+      name: user.name,
+      googleAccounts: user.googleAccounts,
+      hubspotAccounts: user.hubspotAccounts,
+      accessToken: req.user.accessToken,
+    });
+
+    return res.redirect(`http://localhost:5001/dashboard?token=${token}`);
   }
 }

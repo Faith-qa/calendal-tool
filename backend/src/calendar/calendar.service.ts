@@ -1,262 +1,232 @@
-import { Injectable, BadRequestException, UnauthorizedException, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { google, calendar_v3 } from 'googleapis';
+import {BadRequestException, Injectable, UnauthorizedException} from '@nestjs/common';
+import { google } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
-import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
-import { addMinutes, isBefore, isAfter, parseISO, startOfDay } from 'date-fns';
-import { CreateSchedulingLinkDto } from '../scheduling/dto/create-scheduling-link.dto';
-
-export interface CalendarSlot {
-  id: string;
-  start: string;
-  end: string;
-}
-
-interface BusySlot {
-  start: string;
-  end: string;
-}
+import { ConfigService } from '@nestjs/config';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { User } from '../auth/user.schema';
 
 @Injectable()
 export class CalendarService {
-  private readonly logger = new Logger(CalendarService.name);
-  private readonly oauth2Client: OAuth2Client;
+  private oauth2Client: OAuth2Client;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+      private readonly configService: ConfigService,
+      @InjectModel(User.name) private userModel: Model<User>,
+  ) {
     this.oauth2Client = new google.auth.OAuth2(
-      this.configService.get<string>('GOOGLE_CLIENT_ID'),
-      this.configService.get<string>('GOOGLE_CLIENT_SECRET'),
-      this.configService.get<string>('GOOGLE_REDIRECT_URI'),
+        this.configService.get<string>('GOOGLE_CLIENT_ID'),
+        this.configService.get<string>('GOOGLE_CLIENT_SECRET'),
+        this.configService.get<string>('GOOGLE_CALLBACK_URL'),
     );
   }
 
-  private validateTimeParameters(startHour: number, endHour: number, slotDuration: number): void {
-    if (startHour < 0 || startHour > 23) {
-      throw new BadRequestException('Start hour must be between 0 and 23');
+  private async refreshAccessToken(account: any): Promise<string> {
+    if (!account.refreshToken) {
+      throw new UnauthorizedException('No refresh token available to refresh access token');
     }
-    if (endHour < startHour || endHour > 24) {
-      throw new BadRequestException('End hour must be between start hour and 24');
-    }
-    if (slotDuration < 15 || slotDuration > 120) {
-      throw new BadRequestException('Slot duration must be between 15 and 120 minutes');
-    }
-    if (slotDuration % 5 !== 0) {
-      throw new BadRequestException('Slot duration must be a multiple of 5 minutes');
-    }
-  }
 
-  private validateDate(date: string): void {
-    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
-    if (!dateRegex.test(date)) {
-      throw new BadRequestException('Date must be in YYYY-MM-DD format');
-    }
-    const parsedDate = new Date(date);
-    if (isNaN(parsedDate.getTime())) {
-      throw new BadRequestException('Invalid date');
-    }
-    const today = startOfDay(new Date());
-    const bookingDay = startOfDay(parsedDate);
-    if (isBefore(bookingDay, today)) {
-      throw new BadRequestException('Cannot book slots in the past');
-    }
-  }
-
-  private createGoogleAuthClient(accessToken: string) {
-    try {
-      const auth = new google.auth.OAuth2(
-        this.configService.get<string>('GOOGLE_CLIENT_ID'),
-        this.configService.get<string>('GOOGLE_CLIENT_SECRET'),
-      );
-      auth.setCredentials({ access_token: accessToken });
-      return auth;
-    } catch (error) {
-      throw new UnauthorizedException('Failed to initialize Google auth client');
-    }
-  }
-
-  private dedupeSlots(slots: CalendarSlot[]): CalendarSlot[] {
-    const uniqueSlots = new Map<string, CalendarSlot>();
-    
-    slots.forEach(slot => {
-      const key = `${slot.start}-${slot.end}`;
-      if (!uniqueSlots.has(key)) {
-        uniqueSlots.set(key, slot);
-      }
+    this.oauth2Client.setCredentials({
+      refresh_token: account.refreshToken,
     });
 
-    return Array.from(uniqueSlots.values());
-  }
-
-  async getEvents(
-    accessToken: string | string[],
-    startTime: string,
-    endTime: string,
-    timeZone: string = 'UTC',
-  ): Promise<calendar_v3.Schema$Event[]> {
     try {
-      const tokens = Array.isArray(accessToken) ? accessToken : [accessToken];
-      const allEvents: calendar_v3.Schema$Event[] = [];
-
-      for (const token of tokens) {
-        const auth = this.createGoogleAuthClient(token);
-        const calendar = google.calendar({ version: 'v3', auth });
-
-        const response = await calendar.events.list({
-          calendarId: 'primary',
-          timeMin: startTime,
-          timeMax: endTime,
-          singleEvents: true,
-          orderBy: 'startTime',
-          timeZone,
-        });
-
-        allEvents.push(...(response.data.items || []));
+      const { credentials } = await this.oauth2Client.refreshAccessToken();
+      const newAccessToken = credentials.access_token;
+      if (!newAccessToken) {
+        throw new UnauthorizedException('Failed to refresh access token');
       }
 
-      return allEvents;
+      // Update the user's access token in the database
+      await this.userModel.updateOne(
+          { 'googleAccounts.email': account.email },
+          { $set: { 'googleAccounts.$.accessToken': newAccessToken } },
+      );
+
+      return newAccessToken;
     } catch (error) {
-      if (error.response?.status === 401) {
-        throw new UnauthorizedException('Invalid or expired access token');
-      }
-      if (error.response?.status === 403) {
-        throw new UnauthorizedException('Insufficient permissions to access calendar');
-      }
-      throw new BadRequestException(`Failed to fetch events: ${error.message}`);
+      console.error('Failed to refresh access token:', error.message);
+      throw new UnauthorizedException('Failed to refresh access token');
     }
   }
 
   async getAvailableSlots(
-    accessToken: string | string[],
-    date: string,
-    startHour: number,
-    endHour: number,
-    slotDuration: number,
-    timezone: string = 'UTC',
-  ): Promise<CalendarSlot[]> {
-    try {
-      // Validate parameters
-      this.validateTimeParameters(startHour, endHour, slotDuration);
-      this.validateDate(date);
+      user: any,
+      date: string,
+      startHour: number,
+      endHour: number,
+      slotDuration: number,
+  ): Promise<any[]> {
+    if (!user || !user.googleAccounts || user.googleAccounts.length === 0) {
+      throw new UnauthorizedException('No Google accounts connected');
+    }
 
-      const tokens = Array.isArray(accessToken) ? accessToken : [accessToken];
-      const allSlots: CalendarSlot[] = [];
+    const startDateTime = new Date(date);
+    startDateTime.setHours(startHour, 0, 0, 0);
+    const endDateTime = new Date(date);
+    endDateTime.setHours(endHour, 0, 0, 0);
 
-      for (const token of tokens) {
-        this.oauth2Client.setCredentials({ access_token: token });
-        const calendar = google.calendar({ version: 'v3', auth: this.oauth2Client });
+    let allBusySlots: { start: Date; end: Date }[] = [];
 
-        // Convert local time to UTC for Google Calendar API
-        const startTimeLocal = `${date}T${startHour.toString().padStart(2, '0')}:00:00`;
-        const endTimeLocal = `${date}T${endHour.toString().padStart(2, '0')}:00:00`;
-        
-        const startTimeUtc = toZonedTime(startTimeLocal, timezone);
-        const endTimeUtc = toZonedTime(endTimeLocal, timezone);
+    for (const account of user.googleAccounts) {
+      const { email, accessToken, refreshToken } = account;
+      if (!accessToken) {
+        console.warn(`Skipping account ${email}: No access token available`);
+        continue;
+      }
 
-        // Get calendar events for the specified date
+      let currentAccessToken = accessToken;
+      const auth = new google.auth.OAuth2();
+      auth.setCredentials({ access_token: currentAccessToken });
+
+      const calendar = google.calendar({ version: 'v3', auth });
+
+      try {
         const response = await calendar.events.list({
           calendarId: 'primary',
-          timeMin: startTimeUtc.toISOString(),
-          timeMax: endTimeUtc.toISOString(),
+          timeMin: startDateTime.toISOString(),
+          timeMax: endDateTime.toISOString(),
           singleEvents: true,
           orderBy: 'startTime',
-          timeZone: timezone,
         });
 
         const events = response.data.items || [];
-        const busySlots: BusySlot[] = events.map((event) => ({
-          start: event.start?.dateTime || event.start?.date || '',
-          end: event.end?.dateTime || event.end?.date || '',
-        })).filter(slot => slot.start && slot.end);
+        const busySlots = events.map((event) => ({
+          start: new Date(event.start?.dateTime || event.start?.date || 0),
+          end: new Date(event.end?.dateTime || event.end?.date || 0),
+        }));
+        allBusySlots.push(...busySlots);
+      } catch (error) {
+        if (error.message.includes('Invalid Credentials') && refreshToken) {
+          try {
+            currentAccessToken = await this.refreshAccessToken(account);
+            auth.setCredentials({ access_token: currentAccessToken });
 
-        // Generate available slots in local timezone
-        let currentTime = startTimeUtc;
+            const retryResponse = await calendar.events.list({
+              calendarId: 'primary',
+              timeMin: startDateTime.toISOString(),
+              timeMax: endDateTime.toISOString(),
+              singleEvents: true,
+              orderBy: 'startTime',
+            });
 
-        while (isBefore(currentTime, endTimeUtc)) {
-          const slotEnd = addMinutes(currentTime, slotDuration);
-          
-          // Skip if slot would exceed end time
-          if (isAfter(slotEnd, endTimeUtc)) {
-            break;
+            const events = retryResponse.data.items || [];
+            const busySlots = events.map((event) => ({
+              start: new Date(event.start?.dateTime || event.start?.date || 0),
+              end: new Date(event.end?.dateTime || event.end?.date || 0),
+            }));
+            allBusySlots.push(...busySlots);
+          } catch (refreshError) {
+            console.error(`Failed to refresh token for account ${email}:`, refreshError.message);
+            continue;
           }
-
-          const slot = {
-            id: `${currentTime.toISOString()}-${slotEnd.toISOString()}`,
-            start: formatInTimeZone(currentTime, timezone, "yyyy-MM-dd'T'HH:mm:ssXXX"),
-            end: formatInTimeZone(slotEnd, timezone, "yyyy-MM-dd'T'HH:mm:ssXXX"),
-          };
-
-          // Check if slot overlaps with any busy slots
-          const isAvailable = !busySlots.some(
-            (busy) => {
-              const busyStart = parseISO(busy.start);
-              const busyEnd = parseISO(busy.end);
-              return (
-                (isAfter(currentTime, busyStart) && isBefore(currentTime, busyEnd)) ||
-                (isAfter(slotEnd, busyStart) && isBefore(slotEnd, busyEnd)) ||
-                (isBefore(currentTime, busyStart) && isAfter(slotEnd, busyEnd))
-              );
-            }
-          );
-
-          if (isAvailable) {
-            allSlots.push(slot);
-          }
-
-          currentTime = slotEnd;
+        } else {
+          console.error(`Google Calendar API error for account ${email}:`, {
+            message: error.message,
+            status: error.response?.status,
+            data: error.response?.data ? JSON.stringify(error.response.data, null, 2) : 'No response data',
+          });
+          continue;
         }
       }
-
-      return this.dedupeSlots(allSlots);
-    } catch (error) {
-      if (error.response?.status === 401) {
-        throw new UnauthorizedException('Invalid access token');
-      }
-      if (error.response?.status === 403) {
-        throw new UnauthorizedException('Insufficient permissions to access calendar');
-      }
-      throw new BadRequestException(`Failed to fetch available slots: ${error.message}`);
     }
+
+    const availableSlots: { start: string; end: string }[] = [];
+    let currentTime = new Date(startDateTime);
+
+    while (currentTime.getTime() < endDateTime.getTime()) {
+      const slotEnd = new Date(currentTime.getTime() + slotDuration * 60 * 1000);
+
+      if (slotEnd.getTime() > endDateTime.getTime()) break;
+
+      const isBusy = allBusySlots.some(
+          (slot) =>
+              currentTime.getTime() < slot.end.getTime() &&
+              slotEnd.getTime() > slot.start.getTime(),
+      );
+
+      if (!isBusy) {
+        availableSlots.push({
+          start: currentTime.toISOString(),
+          end: slotEnd.toISOString(),
+        });
+      }
+
+      currentTime = slotEnd;
+    }
+
+    return availableSlots;
   }
 
   async createEvent(
-    accessToken: string,
-    startTime: string,
-    endTime: string,
-    attendeeEmail: string,
-    description?: string[],
-    timezone: string = 'UTC'
-  ) {
-    const calendar = google.calendar({ version: 'v3', auth: this.oauth2Client });
-    this.oauth2Client.setCredentials({ access_token: accessToken });
+      user: any,
+      startTime: string,
+      endTime: string,
+      email: string,
+      answers: string[],
+  ): Promise<any> {
+    if (!user || !user.googleAccounts || user.googleAccounts.length === 0) {
+      throw new UnauthorizedException('No Google accounts connected');
+    }
 
-    const event = {
-      summary: 'Scheduled Meeting',
-      description: description?.join('\n') || '',
-      start: {
-        dateTime: startTime,
-        timeZone: timezone,
-      },
-      end: {
-        dateTime: endTime,
-        timeZone: timezone,
-      },
-      attendees: [
-        {
-          email: attendeeEmail,
-        },
-      ],
-    };
+    const account = user.googleAccounts[0];
+    const { accessToken, refreshToken } = account;
+    if (!accessToken) {
+      throw new UnauthorizedException('No access token found for Google account');
+    }
+
+    let currentAccessToken = accessToken;
+    const auth = new google.auth.OAuth2();
+    auth.setCredentials({ access_token: currentAccessToken });
+
+    const calendar = google.calendar({ version: 'v3', auth });
 
     try {
-      const response = await calendar.events.insert({
+      const event = await calendar.events.insert({
         calendarId: 'primary',
-        requestBody: event,
-        sendUpdates: 'all',
+        requestBody: {
+          summary: `Meeting with ${email}`,
+          description: answers.join('\n'),
+          start: { dateTime: startTime },
+          end: { dateTime: endTime },
+          attendees: [{ email }],
+        },
       });
-      return response.data;
+      return {
+        id: event.data.id,
+        summary: event.data.summary,
+        start: event.data.start?.dateTime,
+        end: event.data.end?.dateTime,
+      };
     } catch (error) {
-      this.logger.error('Error creating calendar event:', error);
-      throw error;
+      if (error.message.includes('Invalid Credentials') && refreshToken) {
+        try {
+          currentAccessToken = await this.refreshAccessToken(account);
+          auth.setCredentials({ access_token: currentAccessToken });
+
+          const event = await calendar.events.insert({
+            calendarId: 'primary',
+            requestBody: {
+              summary: `Meeting with ${email}`,
+              description: answers.join('\n'),
+              start: { dateTime: startTime },
+              end: { dateTime: endTime },
+              attendees: [{ email }],
+            },
+          });
+          return {
+            id: event.data.id,
+            summary: event.data.summary,
+            start: event.data.start?.dateTime,
+            end: event.data.end?.dateTime,
+          };
+        } catch (refreshError) {
+          console.error('Failed to refresh token in createEvent:', refreshError.message);
+          throw new UnauthorizedException('Failed to create calendar event: Invalid credentials');
+        }
+      }
+      console.error('Failed to create Google Calendar event:', error.message);
+      throw new BadRequestException('Failed to create calendar event: ' + error.message);
     }
   }
-} 
+}
