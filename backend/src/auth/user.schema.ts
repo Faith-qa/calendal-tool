@@ -1,6 +1,11 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
+export interface GoogleAccount {
+  email: string;
+  accessToken: string;
+}
+
 @Schema({ timestamps: true })
 export class User extends Document {
   @Prop({ required: true, unique: true })
@@ -12,8 +17,8 @@ export class User extends Document {
   @Prop({ required: true })
   googleId: string;
 
-  @Prop({ type: [{ type: String }], default: [] })
-  googleTokens: string[];
+  @Prop({ type: [{ email: String, accessToken: String }], default: [] })
+  googleAccounts: GoogleAccount[];
 
   @Prop()
   accessToken: string;

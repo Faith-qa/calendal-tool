@@ -26,22 +26,8 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       clientSecret,
       callbackURL,
       scope: ['email', 'profile', 'https://www.googleapis.com/auth/calendar.readonly'],
+      prompt: 'consent',
     });
-  }
-
-  // Override userProfile to catch token exchange errors
-  async userProfile(accessToken: string, done: (err: any, profile?: any) => void): Promise<void> {
-    try {
-      await super.userProfile(accessToken, done);
-    } catch (error) {
-      console.error('GoogleStrategy userProfile error:', {
-        message: error.message,
-        code: error.code,
-        status: error.statusCode,
-        data: error.data || 'No additional data',
-      });
-      throw error;
-    }
   }
 
   async validate(
@@ -78,6 +64,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       const validatedUser: User = {
         ...user.toObject(),
         accessToken: token,
+        googleEmail: email, // Pass the email to AuthService
       };
       done(null, validatedUser);
     } catch (error) {

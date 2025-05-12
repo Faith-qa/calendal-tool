@@ -10,9 +10,9 @@ export class MeetingsController {
     @UseGuards(JwtAuthGuard)
     @Get()
     async findAll(@Req() req: RequestWithUser): Promise<any[]> {
-        if (!req.user || !req.user.accessToken) {
-            throw new UnauthorizedException('Invalid user or access token');
+        if (!req.user) {
+            throw new UnauthorizedException('Invalid user');
         }
-        return this.meetingsService.getUserMeetings(req.user.accessToken);
+        return this.meetingsService.getUserMeetings(req.user);
     }
 }

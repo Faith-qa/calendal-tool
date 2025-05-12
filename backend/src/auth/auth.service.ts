@@ -20,18 +20,25 @@ export class AuthService {
           googleId: profile.id,
           email: profile.emails[0].value,
           name: profile.displayName,
-          googleTokens: [accessToken],
+          googleAccounts: [{ email: profile.emails[0].value, accessToken }],
         });
-      } else if (!user.googleTokens.includes(accessToken)) {
-        user.googleTokens.push(accessToken);
-        await user.save();
+      } else {
+        const updatedUser = await this.userModel.findOneAndUpdate(
+            { googleId: profile.id },
+            { $addToSet: { googleAccounts: { email: profile.emails[0].value, accessToken } } },
+            { new: true },
+        );
+        if (!updatedUser) {
+          throw new Error('Failed to update user');
+        }
+        user = updatedUser;
       }
 
       const token = this.jwtService.sign({
-        sub: user._id,
+        sub: user.id, // Use id getter instead of _id.toString()
         email: user.email,
         name: user.name,
-        googleTokens: user.googleTokens,
+        googleAccounts: user.googleAccounts,
         accessToken,
       });
 
@@ -50,30 +57,38 @@ export class AuthService {
     try {
       let user = await this.userModel.findOne({ email });
       if (!user) {
+        console.log('Creating new user:', { email, name, googleId });
         user = await this.userModel.create({
           email,
           name,
           googleId,
-          googleTokens: [accessToken],
+          googleAccounts: [{ email, accessToken }],
         });
+        console.log('User created:', user);
       } else {
         const updatedUser = await this.userModel.findOneAndUpdate(
             { email },
-            { $addToSet: { googleTokens: accessToken }, googleId },
+            {
+              $addToSet: { googleAccounts: { email, accessToken } },
+              googleId,
+            },
             { new: true },
         );
         if (!updatedUser) {
           throw new Error('Failed to update user');
         }
         user = updatedUser;
+        console.log('User updated:', user);
       }
+
       const token = this.jwtService.sign({
-        sub: user._id,
+        sub: user.id, // Use id getter instead of _id.toString()
         email: user.email,
         name: user.name,
-        googleTokens: user.googleTokens,
+        googleAccounts: user.googleAccounts,
         accessToken,
       });
+      console.log('JWT token generated:', token);
       return { user, token };
     } catch (error) {
       console.error('validateOAuthLogin error:', {
@@ -82,6 +97,29 @@ export class AuthService {
         email,
         name,
         googleId,
+      });
+      throw error;
+    }
+  }
+
+  async addGoogleAccount(userId: string, email: string, accessToken: string): Promise<User> {
+    try {
+      const user = await this.userModel.findByIdAndUpdate(
+          userId,
+          { $addToSet: { googleAccounts: { email, accessToken } } },
+          { new: true },
+      );
+      if (!user) {
+        throw new Error('User not found');
+      }
+      console.log('Added Google account to user:', { userId, email });
+      return user;
+    } catch (error) {
+      console.error('addGoogleAccount error:', {
+        message: error.message,
+        stack: error.stack,
+        userId,
+        email,
       });
       throw error;
     }
