@@ -9,17 +9,22 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:6.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v3
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '18'
-      - name: Install MongoDB
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y mongodb
-          sudo service mongodb start
       - name: Install dependencies
         run: |
           cd backend
