@@ -1,18 +1,21 @@
 import axios from 'axios';
 import { AuthResponse, HubSpotResponse, TimeSlot, Meeting, SchedulingWindow, SchedulingLink, BookingRequest } from '../types';
+console.log('REACT_APP_API_BASE_URL:', process.env.REACT_APP_API_BASE_URL);
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL,
+  baseURL: process.env.REACT_APP_API_BASE_URL,
 });
 
-export const setAuthToken = (token: string | null) => {
-  if (token) {
-    api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-  } else {
-    delete api.defaults.headers.common['Authorization'];
+// Add a request interceptor to include the token from localStorage
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token && config.headers) {
+    config.headers.Authorization = `Bearer ${token}`;
   }
-};
+  return config;
+});
 
+console.log(api)
 export const googleLogin = async (): Promise<AuthResponse> => {
   const response = await api.post<AuthResponse>('/auth/google');
   return response.data;

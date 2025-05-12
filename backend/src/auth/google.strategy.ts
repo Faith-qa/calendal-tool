@@ -25,8 +25,23 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       clientID,
       clientSecret,
       callbackURL,
-      scope: ['email', 'profile'],
+      scope: ['email', 'profile', 'https://www.googleapis.com/auth/calendar.readonly'],
     });
+  }
+
+  // Override userProfile to catch token exchange errors
+  async userProfile(accessToken: string, done: (err: any, profile?: any) => void): Promise<void> {
+    try {
+      await super.userProfile(accessToken, done);
+    } catch (error) {
+      console.error('GoogleStrategy userProfile error:', {
+        message: error.message,
+        code: error.code,
+        status: error.statusCode,
+        data: error.data || 'No additional data',
+      });
+      throw error;
+    }
   }
 
   async validate(
@@ -69,6 +84,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       console.error('Google strategy validation error:', {
         message: error.message,
         stack: error.stack,
+        profile: profile ? JSON.stringify(profile, null, 2) : 'No profile',
       });
       if (error instanceof UnauthorizedException) {
         done(error, false);

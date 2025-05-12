@@ -4,6 +4,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { LoggerModule } from 'nestjs-pino';
 import { AuthModule } from './auth/auth.module';
 import { CalendarModule } from './calendar/calendar.module';
+import {MeetingsModule} from "@/meetings/meetings.module";
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { CalendarModule } from './calendar/calendar.module';
     MongooseModule.forRoot(process.env.MONGODB_URI || 'mongodb://localhost:27017/calendly-tool'),
     AuthModule,
     CalendarModule,
+    MeetingsModule,
   ],
 })
 export class AppModule {}

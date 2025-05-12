@@ -1,19 +1,11 @@
 import axios from 'axios';
-import api, { setAuthToken } from './api';
+import api from './api';
 import { AuthResponse, HubSpotResponse, TimeSlot, Meeting } from '../types';
 import { mockedAxios } from '../setupTests';
 
 describe('API Service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-  });
-
-  it('sets auth token', () => {
-    setAuthToken('test-token');
-    expect(api.defaults.headers.common['Authorization']).toBe('Bearer test-token');
-
-    setAuthToken(null);
-    expect(api.defaults.headers.common['Authorization']).toBeUndefined();
   });
 
   it('makes GET request', async () => {

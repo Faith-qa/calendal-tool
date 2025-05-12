@@ -12,62 +12,91 @@ export class AuthService {
   ) {}
 
   async googleLogin(accessToken: string, refreshToken: string, profile: any): Promise<{ user: User; token: string }> {
-    let user = await this.userModel.findOne({ googleId: profile.id }).exec();
+    try {
+      let user = await this.userModel.findOne({ googleId: profile.id }).exec();
 
-    if (!user) {
-      user = await this.userModel.create({
-        googleId: profile.id,
-        email: profile.emails[0].value,
-        name: profile.displayName,
-        googleTokens: [accessToken],
+      if (!user) {
+        user = await this.userModel.create({
+          googleId: profile.id,
+          email: profile.emails[0].value,
+          name: profile.displayName,
+          googleTokens: [accessToken],
+        });
+      } else if (!user.googleTokens.includes(accessToken)) {
+        user.googleTokens.push(accessToken);
+        await user.save();
+      }
+
+      const token = this.jwtService.sign({
+        sub: user._id,
+        email: user.email,
+        name: user.name,
+        googleTokens: user.googleTokens,
+        accessToken,
       });
-    } else if (!user.googleTokens.includes(accessToken)) {
-      user.googleTokens.push(accessToken);
-      await user.save();
+
+      return { user, token };
+    } catch (error) {
+      console.error('googleLogin error:', {
+        message: error.message,
+        stack: error.stack,
+        profile: profile ? JSON.stringify(profile, null, 2) : 'No profile',
+      });
+      throw error;
     }
-
-    const token = this.jwtService.sign({
-      sub: user._id,
-      email: user.email,
-      name: user.name,
-      googleTokens: user.googleTokens,
-      accessToken,
-    });
-
-    return { user, token };
   }
 
   async validateOAuthLogin(email: string, name: string, accessToken: string, googleId: string): Promise<{ user: User; token: string }> {
-    let user = await this.userModel.findOne({ email });
-    if (!user) {
-      user = await this.userModel.create({
+    try {
+      let user = await this.userModel.findOne({ email });
+      if (!user) {
+        user = await this.userModel.create({
+          email,
+          name,
+          googleId,
+          googleTokens: [accessToken],
+        });
+      } else {
+        const updatedUser = await this.userModel.findOneAndUpdate(
+            { email },
+            { $addToSet: { googleTokens: accessToken }, googleId },
+            { new: true },
+        );
+        if (!updatedUser) {
+          throw new Error('Failed to update user');
+        }
+        user = updatedUser;
+      }
+      const token = this.jwtService.sign({
+        sub: user._id,
+        email: user.email,
+        name: user.name,
+        googleTokens: user.googleTokens,
+        accessToken,
+      });
+      return { user, token };
+    } catch (error) {
+      console.error('validateOAuthLogin error:', {
+        message: error.message,
+        stack: error.stack,
         email,
         name,
         googleId,
-        googleTokens: [accessToken],
       });
-    } else {
-      const updatedUser = await this.userModel.findOneAndUpdate(
-          { email },
-          { $addToSet: { googleTokens: accessToken }, googleId },
-          { new: true },
-      );
-      if (!updatedUser) {
-        throw new Error('Failed to update user');
-      }
-      user = updatedUser;
+      throw error;
     }
-    const token = this.jwtService.sign({
-      sub: user._id,
-      email: user.email,
-      name: user.name,
-      googleTokens: user.googleTokens,
-      accessToken,
-    });
-    return { user, token };
   }
 
   async findUserById(id: string): Promise<User | null> {
-    return this.userModel.findById(id);
+    try {
+      return await this.userModel.findById(id);
+    } catch (error) {
+      console.error('findUserById error:', {
+        message: error.message,
+        stack: error.stack,
+        id,
+      });
+      throw error;
+    }
   }
 }

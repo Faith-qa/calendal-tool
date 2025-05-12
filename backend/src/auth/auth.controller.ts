@@ -24,14 +24,22 @@ export class AuthController {
   async googleAuthCallback(@Req() req: RequestWithUser, @Res() res: Response) {
     try {
       if (!req.user || !req.user.accessToken) {
+        console.error('Authentication failed: Invalid user data structure', { user: req.user });
         throw new UnauthorizedException('Invalid user data structure');
       }
 
       // Redirect to frontend with the token
       return res.redirect(`http://localhost:5001?token=${req.user.accessToken}`);
     } catch (error) {
-      console.error('Google callback error:', error.message);
-      return res.redirect('http://localhost:5001?error=auth_failed');
+      console.error('Google callback error:', {
+        message: error.message,
+        stack: error.stack,
+        user: req.user,
+      });
+      if (error instanceof UnauthorizedException) {
+        return res.redirect('http://localhost:5001?error=auth_failed');
+      }
+      throw new InternalServerErrorException('Failed to process Google callback');
     }
   }
 }
