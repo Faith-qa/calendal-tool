@@ -11,11 +11,9 @@ declare global {
   }
 }
 
+import { Request } from 'express';
+import { User } from '../user.schema';
+
 export interface RequestWithUser extends Request {
-  user?: {
-    id: string;
-  };
-  token?: {
-    access_token: string;
-  };
-} 
+  user?: User;
+}

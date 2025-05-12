@@ -3,50 +3,73 @@ import { Strategy, VerifyCallback } from 'passport-google-oauth20';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
+import { User } from './user.schema';
 
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   constructor(
-    private readonly authService: AuthService,
-    private readonly configService: ConfigService,
+      private readonly authService: AuthService,
+      private readonly configService: ConfigService,
   ) {
+    const clientID = configService.get<string>('GOOGLE_CLIENT_ID');
+    const clientSecret = configService.get<string>('GOOGLE_CLIENT_SECRET');
+    const callbackURL = configService.get<string>('GOOGLE_CALLBACK_URL');
+
+    if (!clientID || !clientSecret || !callbackURL) {
+      throw new Error('Missing Google OAuth configuration: clientID, clientSecret, or callbackURL');
+    }
+
+    console.log('GoogleStrategy configuration:', { clientID, clientSecret, callbackURL });
+
     super({
-      clientID: configService.get<string>('GOOGLE_CLIENT_ID') || '',
-      clientSecret: configService.get<string>('GOOGLE_CLIENT_SECRET') || '',
-      callbackURL: configService.get<string>('GOOGLE_CALLBACK_URL') || '',
+      clientID,
+      clientSecret,
+      callbackURL,
       scope: ['email', 'profile'],
     });
   }
 
   async validate(
-    accessToken: string,
-    refreshToken: string,
-    profile: any,
-    done: VerifyCallback,
-  ): Promise<any> {
+      accessToken: string,
+      refreshToken: string,
+      profile: any,
+      done: VerifyCallback,
+  ): Promise<void> {
     try {
+      console.log('Google OAuth response:', {
+        accessToken,
+        refreshToken: refreshToken || 'Not provided',
+        profile: JSON.stringify(profile, null, 2),
+      });
+
       if (!profile.emails || profile.emails.length === 0) {
         throw new UnauthorizedException('No email found in profile');
-        return;
       }
 
       if (!profile.displayName) {
         throw new UnauthorizedException('No name found in profile');
-        return;
       }
 
-      const { emails, displayName } = profile;
+      const { emails, displayName, id } = profile;
       const email = emails[0].value;
       const name = displayName;
+      const googleId = id;
 
       if (!email) {
         throw new UnauthorizedException('No email found in profile');
-        return;
       }
 
-      const { user, token } = await this.authService.validateOAuthLogin(email, name, accessToken);
-      done(null, { token: { access_token: token } });
+      const { user, token } = await this.authService.validateOAuthLogin(email, name, accessToken, googleId);
+      const validatedUser: User = {
+        ...user.toObject(),
+        accessToken: token,
+      };
+      done(null, validatedUser);
     } catch (error) {
+      console.error('Google strategy validation error:', {
+        message: error.message,
+        stack: error.stack,
+      });
       if (error instanceof UnauthorizedException) {
         done(error, false);
       } else {
@@ -54,4 +77,4 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
       }
     }
   }
-} 
+}

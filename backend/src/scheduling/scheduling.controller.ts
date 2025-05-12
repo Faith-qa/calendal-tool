@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Req, UnauthorizedException, BadRequestException } from '@nestjs/common';
+import { Controller, Post, Body, Req, UnauthorizedException, BadRequestException, Get } from '@nestjs/common';
 import { SchedulingService } from './scheduling.service';
 import { BookSlotDto } from './dto/book-slot.dto';
 import { CreateSchedulingLinkDto } from './dto/create-scheduling-link.dto';
@@ -37,5 +37,23 @@ export class SchedulingController {
     }
 
     return this.schedulingService.getAvailableTimesForLink(linkId, date);
+  }
+
+  // New endpoint to get user's meetings
+  @Get('meetings')
+  async getUserMeetings(@Req() req: RequestWithUser) {
+    if (!req.user?.id) {
+      throw new UnauthorizedException('User ID is required');
+    }
+    return this.schedulingService.getMeetings(req.user.id);
+  }
+
+  // Endpoint to get user's Google Calendar events
+  @Get('google-events')
+  async getGoogleEvents(@Req() req: RequestWithUser) {
+    if (!req.user?.id) {
+      throw new UnauthorizedException('User ID is required');
+    }
+    return this.schedulingService.getGoogleCalendarEvents(req.user.id);
   }
 } 

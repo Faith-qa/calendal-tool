@@ -13,6 +13,8 @@ import { AuthService } from '../auth/auth.service';
 import axios from 'axios';
 import { FilterOperatorEnum, PublicObjectSearchRequest } from '@hubspot/api-client/lib/codegen/crm/contacts';
 import { AssociationSpecAssociationCategoryEnum } from '@hubspot/api-client/lib/codegen/crm/objects';
+import { google } from 'googleapis';
+import { User } from '../auth/user.schema';
 
 interface HubSpotContact {
   id: string;
@@ -36,6 +38,7 @@ export class SchedulingService {
     private readonly calendarService: CalendarService,
     @InjectModel(SchedulingLink.name) private schedulingLinkModel: Model<SchedulingLink>,
     @InjectModel(Booking.name) private bookingModel: Model<Booking>,
+    @InjectModel(User.name) private userModel: Model<User>,
     private readonly configService: ConfigService,
     private readonly authService: AuthService,
   ) {
@@ -422,5 +425,29 @@ export class SchedulingService {
         } : null,
       };
     }));
+  }
+
+  async getGoogleCalendarEvents(userId: string) {
+    // Fetch the user's Google access token from your database
+    const user = await this.userModel.findById(userId);
+    if (!user || !user.accessToken) {
+      throw new Error('Google access token not found for user');
+    }
+
+    const oauth2Client = new google.auth.OAuth2();
+    oauth2Client.setCredentials({ access_token: user.accessToken });
+
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+
+    // Fetch events (customize timeMin/timeMax as needed)
+    const res = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: new Date().toISOString(),
+      maxResults: 20,
+      singleEvents: true,
+      orderBy: 'startTime',
+    });
+
+    return res.data.items;
   }
 } 
